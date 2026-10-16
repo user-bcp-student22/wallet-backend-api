@@ -17,6 +17,19 @@ public class InMemoryAccountRepository implements AccountRepository {
                 Account.newGoogleAccount(identity.subject(), identity.email(), identity.name()));
     }
 
+    @Override
+    public java.util.Optional<Account> findById(String accountId) {
+        return accounts.values().stream()
+                .filter(account -> account.id().equals(accountId))
+                .findFirst();
+    }
+
+    @Override
+    public void update(Account account) {
+        var key = new IdentityKey(account.provider(), account.subject());
+        accounts.computeIfPresent(key, (ignored, current) -> account);
+    }
+
     private record IdentityKey(String provider, String subject) {
     }
 }

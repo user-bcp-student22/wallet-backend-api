@@ -9,14 +9,16 @@ info:
     1. Autenticarse con Google.
     2. Registrar obligatoriamente una passkey usando el autenticador del
        dispositivo (por ejemplo, biometría facial cuando esté disponible).
-    3. Ingresar y verificar un celular peruano mediante un código SMS.
+     3. Ejecutar la simulación facial de demo (no es KYC real ni procesa imágenes).
+     4. Ingresar y verificar un celular peruano mediante un código SMS.
 
     La passkey es un paso obligatorio del registro, no un método de inicio de
     sesión para este MVP. Los ingresos posteriores se realizan con Google. El
     rostro y las plantillas biométricas permanecen en el dispositivo; la API
-    verifica la credencial WebAuthn. Verificar el celular completa el registro
-    y permite continuar a la pantalla principal. Pagos y otras funciones quedan
-    fuera de este contrato.
+     verifica la credencial WebAuthn. La simulación facial solo está disponible
+     en perfiles dev/test y no acredita identidad. Verificar el celular completa
+     el registro y permite continuar a la pantalla principal. Pagos y otras
+     funciones quedan fuera de este contrato.
 servers:
   - url: https://sandbox.api.minka.pe
     description: Sandbox
@@ -26,7 +28,7 @@ tags:
   - name: Acceso
     description: Autenticación inicial con Google.
   - name: Registro
-    description: Registro de passkey y verificación del celular.
+    description: Registro de passkey, simulación facial de demo y verificación del celular.
 
 security:
   - bearerAuth: []
@@ -76,8 +78,8 @@ paths:
         estado BIOMETRIC_PENDING. Devuelve las opciones WebAuthn que el cliente
         entrega al autenticador del dispositivo para crear una passkey. El
         autenticador puede solicitar biometría facial u otro método local
-        admitido por el dispositivo. Este paso debe completarse antes de ingresar
-        el celular.
+        admitido por el dispositivo. Este paso debe completarse antes de la
+        simulación facial de demo.
       responses:
         "201":
           description: Opciones de registro creadas.
@@ -98,8 +100,8 @@ paths:
       description: |
         Verifica la respuesta WebAuthn y asocia la passkey a la cuenta
         autenticada con Google. Al completarse, el registro avanza al ingreso
-        del celular. La passkey no se usa como método de inicio de sesión en
-        este MVP.
+        de la simulación facial. La passkey no se usa como método de inicio de
+        sesión en este MVP.
       requestBody:
         required: true
         content:
@@ -126,6 +128,49 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /v1/onboarding/facial-verifications:
+    post:
+      tags: [Registro]
+      operationId: simulateFacialVerification
+      summary: Ejecutar la simulación facial de demo
+      description: |
+        Disponible únicamente en perfiles dev/test. No captura ni recibe datos
+        faciales y no realiza KYC. Requiere JWT Bearer y estado
+        FACIAL_VERIFICATION_PENDING. El resultado se obtiene de la configuración
+        del backend. Solo APPROVED permite continuar a PHONE_PENDING.
+      responses:
+        "200":
+          description: Resultado simulado y estado de onboarding actual.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FacialVerificationResponse"
+              examples:
+                approved:
+                  value:
+                    result: APPROVED
+                    onboarding:
+                      status: PHONE_PENDING
+                      nextAction: ENTER_PHONE
+                      phoneNumberMasked: null
+                notApproved:
+                  value:
+                    result: NOT_APPROVED
+                    onboarding:
+                      status: FACIAL_VERIFICATION_PENDING
+                      nextAction: VERIFY_FACIAL_IDENTITY
+                      phoneNumberMasked: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/InvalidState"
+        "503":
+          description: La simulación no está disponible y el onboarding no cambia.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/onboarding:
     get:
       tags: [Registro]
@@ -149,8 +194,8 @@ paths:
       summary: Enviar el código de verificación por SMS
       description: |
         Envía un código de seis dígitos a un celular peruano. Requiere que se
-        haya completado el registro biométrico. Un código nuevo invalida el
-        anterior.
+        haya completado el registro de passkey y la simulación facial haya sido
+        aprobada. Un código nuevo invalida el anterior.
       requestBody:
         required: true
         content:
@@ -169,7 +214,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "409":
-          description: El celular ya está asociado a otra cuenta o falta completar un paso previo.
+          description: El celular ya está asociado a otra cuenta o falta completar passkey/simulación facial.
           content:
             application/problem+json:
               schema:
@@ -184,7 +229,7 @@ paths:
       tags: [Registro]
       operationId: verifyPhoneCode
       summary: Validar el código recibido por SMS
-      description: Requiere que el registro biométrico ya se haya completado.
+      description: Requiere que passkey y simulación facial ya se hayan completado, además del desafío SMS.
       requestBody:
         required: true
         content:
@@ -329,6 +374,18 @@ components:
         onboarding:
           $ref: "#/components/schemas/Onboarding"
 
+    FacialVerificationResponse:
+      type: object
+      additionalProperties: false
+      required: [result, onboarding]
+      properties:
+        result:
+          type: string
+          enum: [APPROVED, NOT_APPROVED]
+          description: Resultado simulado por el backend; no representa KYC real.
+        onboarding:
+          $ref: "#/components/schemas/Onboarding"
+
     AuthSession:
       type: object
       additionalProperties: false
@@ -372,10 +429,10 @@ components:
       properties:
         status:
           type: string
-          enum: [BIOMETRIC_PENDING, PHONE_PENDING, PHONE_VERIFICATION_PENDING, COMPLETED]
+          enum: [BIOMETRIC_PENDING, FACIAL_VERIFICATION_PENDING, PHONE_PENDING, PHONE_VERIFICATION_PENDING, COMPLETED]
         nextAction:
           type: string
-          enum: [REGISTER_BIOMETRIC, ENTER_PHONE, VERIFY_PHONE, OPEN_HOME]
+          enum: [REGISTER_BIOMETRIC, VERIFY_FACIAL_IDENTITY, ENTER_PHONE, VERIFY_PHONE, OPEN_HOME]
         phoneNumberMasked:
           type: [string, "null"]
           example: "+51 999 *** 999"

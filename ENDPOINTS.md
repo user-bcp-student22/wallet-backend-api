@@ -13,7 +13,7 @@ los endpoints estén implementados ni disponibles en un servidor.
 | Producción | `https://api.minka.pe` |
 | Formato de requests y respuestas | `application/json`, salvo errores (`application/problem+json`) |
 | Autenticación | JWT Bearer para los endpoints protegidos |
-| Flujo | Google → registrar biometría/passkey → ingresar y verificar celular → pantalla principal |
+| Flujo | Google → registrar passkey → simulación facial de demo → ingresar y verificar celular → pantalla principal |
 
 Los endpoints marcados como públicos (`security: []`) no requieren el JWT de la
 aplicación. Para los demás, enviar:
@@ -27,7 +27,7 @@ No enviar el token en el endpoint público `POST /v1/auth/google`.
 
 ## Flujo de integración
 
-### Registro inicial: Google y luego biometría
+### Registro inicial: Google, passkey y simulación de demo
 
 1. La app obtiene un ID token de Google y llama a `POST /v1/auth/google`.
 2. La respuesta incluye un JWT para continuar el registro y el estado
@@ -36,19 +36,25 @@ No enviar el token en el endpoint público `POST /v1/auth/google`.
    `POST /v1/auth/biometric/registration-challenges`, entregar sus opciones al
    autenticador del dispositivo y enviar la credencial resultante a
    `POST /v1/auth/biometric/registrations`.
-4. Al registrarse la passkey, la respuesta avanza a `PHONE_PENDING`. La app ya
-   puede continuar con el celular.
-5. La biometría se solicita localmente por el autenticador del dispositivo. El
+4. Al registrarse la passkey, la respuesta avanza a
+  `FACIAL_VERIFICATION_PENDING` / `VERIFY_FACIAL_IDENTITY`.
+5. En la demo, llamar a `POST /v1/onboarding/facial-verifications`. El mock del
+  backend devuelve `APPROVED` o `NOT_APPROVED`; solo `APPROVED` avanza a
+  `PHONE_PENDING` / `ENTER_PHONE`.
+6. La biometría de la passkey se solicita localmente por el autenticador del dispositivo. El
    rostro o su plantilla no se envían a esta API; el sistema operativo puede
    admitir otros métodos locales además del reconocimiento facial.
 
-La biometría es obligatoria solo como paso del registro inicial. No es un método
+La passkey es obligatoria solo como paso del registro inicial. No es un método
 de inicio de sesión en este MVP: en ingresos posteriores se vuelve a usar Google.
+La validación facial de este contrato es una simulación demostrativa, no realiza
+KYC ni valida la identidad de la persona. Está disponible solo en perfiles de
+demo/desarrollo y no debe exponerse como verificación real.
 
 ### Verificación del celular y acceso a la pantalla principal
 
-Después de completar la passkey, consultar `GET /v1/onboarding` si se necesita
-retomar el flujo. Enviar el celular con
+Después de aprobar la simulación facial tras completar la passkey, consultar
+`GET /v1/onboarding` si se necesita retomar el flujo. Enviar el celular con
 `POST /v1/onboarding/phone/challenges`, verificar el código con
 `POST /v1/onboarding/phone/verifications`. Si el código es válido, la respuesta
 indica `COMPLETED` y `OPEN_HOME`; la app puede mostrar la pantalla principal. No
@@ -192,8 +198,8 @@ Ejemplo esquemático (la estructura interna depende de WebAuthn y del cliente):
 {
   "registered": true,
   "onboarding": {
-    "status": "PHONE_PENDING",
-    "nextAction": "ENTER_PHONE",
+    "status": "FACIAL_VERIFICATION_PENDING",
+    "nextAction": "VERIFY_FACIAL_IDENTITY",
     "phoneNumberMasked": null
   }
 }
@@ -207,6 +213,59 @@ Ejemplo esquemático (la estructura interna depende de WebAuthn y del cliente):
 | `409 Conflict` | La operación no corresponde al paso actual del registro. |
 | `410 Gone` | El desafío de registro venció o ya fue utilizado. |
 | `422 Unprocessable Content` | El request o la credencial no cumple el contrato. |
+
+---
+
+## `POST /v1/onboarding/facial-verifications`
+
+### 1. Qué hace
+
+Ejecuta la simulación facial de la demo. No captura, recibe, transmite ni
+compara imágenes o plantillas faciales. El resultado se determina en el backend
+por configuración; el cliente no puede enviar su propio resultado. Solo
+`APPROVED` permite continuar al celular. Este endpoint no realiza KYC ni acredita
+la identidad real.
+
+Está disponible únicamente en perfiles de demo/desarrollo (`dev`/`test`); no
+debe habilitarse en producción.
+
+### 2. Autenticación
+
+Requiere `Authorization: Bearer <accessToken>` y que el onboarding esté en
+`FACIAL_VERIFICATION_PENDING`.
+
+### 3. Request
+
+No tiene cuerpo ni parámetros.
+
+### 4. Respuestas
+
+`200 OK` devuelve `result` y el estado actual:
+
+```json
+{
+  "result": "APPROVED",
+  "onboarding": {
+    "status": "PHONE_PENDING",
+    "nextAction": "ENTER_PHONE",
+    "phoneNumberMasked": null
+  }
+}
+```
+
+Con `NOT_APPROVED`, el onboarding permanece en
+`FACIAL_VERIFICATION_PENDING` / `VERIFY_FACIAL_IDENTITY`. La simulación puede
+configurarse con los resultados `APPROVED`, `NOT_APPROVED` o `UNAVAILABLE`.
+
+### 5. Respuestas de error
+
+| Código | Cuándo ocurre |
+|---|---|
+| `401 Unauthorized` | Falta el JWT o no es válido. |
+| `409 Conflict` | El onboarding no está en `FACIAL_VERIFICATION_PENDING`. |
+| `503 Service Unavailable` | El resultado simulado está configurado como `UNAVAILABLE`; no cambia el onboarding. |
+
+Los errores usan `application/problem+json`.
 
 ---
 
@@ -231,8 +290,8 @@ Devuelve [`Onboarding`](#onboarding):
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `status` | string | `BIOMETRIC_PENDING`, `PHONE_PENDING`, `PHONE_VERIFICATION_PENDING` o `COMPLETED`. |
-| `nextAction` | string | `REGISTER_BIOMETRIC`, `ENTER_PHONE`, `VERIFY_PHONE` o `OPEN_HOME`. |
+| `status` | string | `BIOMETRIC_PENDING`, `FACIAL_VERIFICATION_PENDING`, `PHONE_PENDING`, `PHONE_VERIFICATION_PENDING` o `COMPLETED`. |
+| `nextAction` | string | `REGISTER_BIOMETRIC`, `VERIFY_FACIAL_IDENTITY`, `ENTER_PHONE`, `VERIFY_PHONE` o `OPEN_HOME`. |
 | `phoneNumberMasked` | string o null | Celular parcialmente oculto, si ya se ingresó. |
 
 ### 5. Respuestas de error
@@ -248,8 +307,8 @@ Devuelve [`Onboarding`](#onboarding):
 ### 1. Qué hace
 
 Inicia la verificación del celular: solicita el envío por SMS de un código de
-seis dígitos. Solo puede llamarse después de completar el paso biométrico. Si
-se genera un desafío nuevo, invalida el anterior.
+seis dígitos. Solo puede llamarse después de completar la passkey y aprobar la
+simulación facial de demo. Si se genera un desafío nuevo, invalida el anterior.
 
 ### 2. Autenticación
 
@@ -287,7 +346,7 @@ Devuelve [`PhoneChallenge`](#phonechallenge):
 | Código | Cuándo ocurre |
 |---|---|
 | `401 Unauthorized` | Falta el token o no es válido. |
-| `409 Conflict` | El celular ya está asociado a otra cuenta o todavía no se completó la biometría. |
+| `409 Conflict` | El celular ya está asociado a otra cuenta o falta completar passkey/simulación facial. |
 | `422 Unprocessable Content` | El número no tiene el formato esperado. |
 | `429 Too Many Requests` | Se excedió el límite de solicitudes; revisar `Retry-After`. |
 
@@ -299,7 +358,7 @@ Devuelve [`PhoneChallenge`](#phonechallenge):
 
 Valida el código recibido por SMS. Si es correcto, marca el celular como
 verificado, completa el registro y permite que la app continúe a la pantalla
-principal.
+principal. Requiere haber completado passkey y aprobado la simulación facial.
 
 ### 2. Autenticación
 
@@ -374,7 +433,7 @@ Ejemplo:
 ```
 
 `biometricRegistered` es `false` hasta que se completa el paso obligatorio de
-registro de passkey.
+registro de passkey. El indicador no representa la simulación facial.
 
 ### `BiometricRegistrationChallenge`
 
@@ -386,7 +445,9 @@ registro de passkey.
 }
 ```
 
-Después de completar el registro de la passkey, la respuesta incluye este estado:
+Después de completar passkey, el estado es
+`FACIAL_VERIFICATION_PENDING` / `VERIFY_FACIAL_IDENTITY`. Después de aprobar la
+simulación, el estado es `PHONE_PENDING` / `ENTER_PHONE`.
 
 ### `Onboarding`
 

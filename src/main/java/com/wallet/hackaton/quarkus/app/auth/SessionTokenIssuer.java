@@ -14,6 +14,7 @@ import java.util.Base64;
 @ApplicationScoped
 public class SessionTokenIssuer {
     public static final int EXPIRES_IN_SECONDS = 900;
+    public static final String ISSUER = "wallet-backend-api";
     private static final String HMAC_SHA_256 = "HmacSHA256";
     private final byte[] signingKey;
 
@@ -31,7 +32,7 @@ public class SessionTokenIssuer {
     public String issue(String userId) {
         long issuedAt = Instant.now().getEpochSecond();
         String header = encode("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-        String payload = encode("{\"sub\":\"" + userId + "\",\"iat\":" + issuedAt
+        String payload = encode("{\"iss\":\"" + ISSUER + "\",\"sub\":\"" + userId + "\",\"iat\":" + issuedAt
                 + ",\"exp\":" + (issuedAt + EXPIRES_IN_SECONDS) + "}");
         String unsignedToken = header + "." + payload;
         return unsignedToken + "." + sign(unsignedToken);

@@ -19,7 +19,7 @@ class SessionTokenIssuerTest {
         String token = new SessionTokenIssuer(TEST_SECRET).issue("user-123");
         String[] parts = token.split("\\.");
         String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
-        Matcher claims = Pattern.compile("\"sub\":\"user-123\",\"iat\":(\\d+),\"exp\":(\\d+)")
+        Matcher claims = Pattern.compile("\"iss\":\"wallet-backend-api\",\"sub\":\"user-123\",\"iat\":(\\d+),\"exp\":(\\d+)")
                 .matcher(payload);
 
         assertEquals(3, parts.length);

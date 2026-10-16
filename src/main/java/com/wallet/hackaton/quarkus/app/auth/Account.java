@@ -23,4 +23,8 @@ public record Account(
                 "REGISTER_BIOMETRIC",
                 null);
     }
+
+    Account withOnboarding(boolean registered, String status, String action) {
+        return new Account(id, provider, subject, email, name, registered, status, action, phoneNumberMasked);
+    }
 }

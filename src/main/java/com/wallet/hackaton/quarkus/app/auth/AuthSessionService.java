@@ -30,12 +30,25 @@ public class AuthSessionService {
         GoogleIdentity identity = identityProvider.get().resolve(idToken)
                 .orElseThrow(InvalidCredentialsException::new);
         Account account = accountRepository.findOrCreate("google", identity);
-        return new AuthenticatedAccount(
-                account,
-                new OnboardingState(
-                        account.onboardingStatus(),
-                        account.nextAction(),
-                        account.phoneNumberMasked()));
+        return new AuthenticatedAccount(account, onboardingState(account));
+        }
+
+        public OnboardingState completePasskeyRegistration(String accountId) {
+        Account account = accountRepository.findById(accountId)
+            .orElseThrow(InvalidCredentialsException::new);
+        if (!"BIOMETRIC_PENDING".equals(account.onboardingStatus())) {
+            throw new InvalidOnboardingStateException();
+        }
+
+        Account updated = account.withOnboarding(
+            true, "FACIAL_VERIFICATION_PENDING", "VERIFY_FACIAL_IDENTITY");
+        accountRepository.update(updated);
+        return onboardingState(updated);
+        }
+
+        private OnboardingState onboardingState(Account account) {
+        return new OnboardingState(
+            account.onboardingStatus(), account.nextAction(), account.phoneNumberMasked());
     }
 
     public record AuthenticatedAccount(Account account, OnboardingState onboarding) {
